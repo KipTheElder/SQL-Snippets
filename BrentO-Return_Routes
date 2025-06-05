@@ -1,0 +1,70 @@
+DROP TABLE IF EXISTS dbo.Stations;
+CREATE TABLE dbo.Stations
+    (StationId INT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+     StationName VARCHAR(50),
+     StationPhysicalOrder INT);
+
+INSERT INTO dbo.Stations (StationName, StationPhysicalOrder)
+    SELECT CHAR(64 + n), n
+    FROM (VALUES
+        (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),
+        (12),(13),(14),(15),(16),(17),(18),(19)
+    ) AS Numbers(n);
+
+DROP TABLE IF EXISTS dbo.StationRoutingOverride;
+CREATE TABLE dbo.StationRoutingOverride
+    (StationRoutingOverrideId INT IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+     StationFromName VARCHAR(50),
+     StationToName VARCHAR(50));
+
+INSERT INTO dbo.StationRoutingOverride (StationFromName, StationToName)
+    VALUES ('E', 'S'), ('B', 'I'), ('I', 'D');
+
+WITH Overrides AS
+(
+ SELECT sf.StationId AS StationIdFrom, sf.StationPhysicalOrder AS spoFrom, st.StationId AS StationIdTo, CAST(sf.StationPhysicalOrder AS DECIMAL(3, 1)) + 0.1 AS spoTo
+   FROM dbo.StationRoutingOverride sro
+   INNER JOIN dbo.Stations sf ON sf.StationName = sro.StationFromName
+   INNER JOIN dbo.Stations st ON st.StationName = sro.StationToName
+),
+     LinkedOverrides AS
+(
+ SELECT StationIdTo, spoTo
+   FROM Overrides
+   WHERE NOT EXISTS (
+                     SELECT 1
+                       FROM Overrides orf
+                       INNER JOIN Overrides ort ON ort.StationIdTo = orf.StationIdFrom
+					  WHERE orf.StationIdTo = Overrides.StationIdTo
+					)
+
+ UNION
+ SELECT ort.StationIdTo, orf.spoTo + 0.1 AS spoFrom
+   FROM Overrides orf
+   INNER JOIN Overrides ort ON orf.StationIdTo = ort.StationIdFrom
+
+),
+     StationList AS
+(     
+ SELECT *,
+        ROW_NUMBER() OVER (ORDER BY COALESCE(lo.spoTo, CAST(s.StationPhysicalOrder AS DECIMAL(3, 1)))) AS RowNo
+   FROM dbo.Stations s
+   LEFT OUTER JOIN LinkedOverrides lo ON lo.StationIdTo = s.StationId
+),
+     StationExcludeRange AS
+(
+ SELECT MIN(spoTo) AS MinSpo,
+        MAX(spoTo) + 0.01 AS MaxSpo
+   FROM LinkedOverrides
+)
+SELECT *
+FROM StationList sl
+LEFT OUTER JOIN StationExcludeRange ser ON 1 = 1
+WHERE sl.StationPhysicalOrder NOT BETWEEN ser.MinSpo AND ser.MaxSpo
+   OR EXISTS
+   (SELECT 1
+      FROM Overrides o
+	 WHERE o.StationIdFrom = sl.StationId
+	    OR o.StationIdTo   = sl.StationId
+   )
+ORDER BY sl.RowNo
